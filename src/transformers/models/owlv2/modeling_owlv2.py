@@ -783,6 +783,9 @@ class Owlv2TextTransformer(nn.Module):
         self.encoder = Owlv2Encoder(config)
         self.final_layer_norm = nn.LayerNorm(embed_dim, eps=config.layer_norm_eps)
 
+        # For `pooled_output` computation
+        self.eos_token_id = config.eos_token_id
+
     @add_start_docstrings_to_model_forward(OWLV2_TEXT_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=Owlv2TextConfig)
     def forward(
@@ -829,12 +832,14 @@ class Owlv2TextTransformer(nn.Module):
 
         last_hidden_state = encoder_outputs[0]
         last_hidden_state = self.final_layer_norm(last_hidden_state)
-
-        # take features from the end of tokens embedding (end of token is the highest number in each sequence)
-        # casting to torch.int for onnx compatibility: argmax doesn't support int64 inputs with opset 14
+        
+        # The config gets updated `eos_token_id` from PR #24773 (so the use of exta new tokens is possible)
         pooled_output = last_hidden_state[
             torch.arange(last_hidden_state.shape[0], device=last_hidden_state.device),
-            input_ids.to(torch.int).argmax(dim=-1).to(last_hidden_state.device),
+            # We need to get the first position of `eos_token_id` value (`pad_token_ids` might equal to `eos_token_id`)
+            (input_ids.to(dtype=torch.int, device=last_hidden_state.device) == self.eos_token_id)
+            .int()
+            .argmax(dim=-1),
         ]
 
         if not return_dict:
